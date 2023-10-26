@@ -6,11 +6,18 @@ const { FieldValue } = require('firebase-admin/firestore')
 const { db } = require('./firebase.js')
 const cors = require("cors");
 const nodemailer = require('nodemailer');
+require('dotenv').config();
 
 
 const app = express();
 app.use(cors());
 const port = process.env.PORT || 9000;
+const user = process.env.MAIL_USER;
+const pass = process.env.MAIL_PASS;
+const service = process.env.MAIL_HOST;
+const client = process.env.CLIENT_ID;
+const secretKey = process.env.SECRET_KEY;
+const refreshToken  = process.env.REFRESH_TOKEN;
 
 app.use(bodyParser.json());
 
@@ -20,10 +27,14 @@ const emailHistory = db.collection("History");
 
 // Create a transporter using nodemailer
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  service: service,
   auth: {
-    user: 'shahzaddurrani00@gmail.com', // Replace with your email
-    pass: '44389197' // Replace with your email password
+    type: 'OAuth2',
+    user: user,
+    pass: pass,
+    clientId: client,
+    clientSecret: secretKey,
+    refreshToken: refreshToken
   }
 });
 
@@ -247,6 +258,7 @@ app.post('/groups/:groupId/send-email', async (req, res) => {
     const groupRef = groups.doc(groupId);
     const groupSnapshot = await groupRef.get();
 
+    
     if (!groupSnapshot.exists) {
       return res.status(404).json({ error: 'Group not found' });
     }
@@ -254,6 +266,7 @@ app.post('/groups/:groupId/send-email', async (req, res) => {
     // Fetch the doctors in the group
     const doctorsCollection = groupRef.collection('doctors');
     const doctorsSnapshot = await doctorsCollection.get();
+    
 
     if (doctorsSnapshot.empty) {
       return res.status(400).json({ error: 'No doctors found in the group' });
@@ -266,13 +279,19 @@ app.post('/groups/:groupId/send-email', async (req, res) => {
 
     // Send the email (replace with your email sending logic)
     const mailOptions = {
-      from: 'shahzaddurrani00@gmail.com',
+      from: 'Shahzaddurrani00@gmail.com',
       to: recipientEmails.join(', '),
       subject: req.body.subject,
       text: req.body.message
     };
 
-    await transporter.sendMail(mailOptions);
+    await transporter.sendMail(mailOptions, function(err, data) {
+      if (err) {
+        console.log("Error " + err);
+      } else {
+        console.log("Email sent successfully");
+      }
+    });
 
     // Store email metadata
     await emailHistory.add({
@@ -283,11 +302,11 @@ app.post('/groups/:groupId/send-email', async (req, res) => {
 
     res.status(200).json({ message: 'Email sent successfully to all doctors in the group' });
   } catch (error) {
-    await emailHistory.add({
-      groupId: groupId,
-      status: 'failed',
-      timestamp: FieldValue.serverTimestamp()
-    });
+    // await emailHistory.add({
+    //   groupId: groupId,
+    //   status: 'failed',
+    //   timestamp: FieldValue.serverTimestamp()
+    // });
     console.error('Error sending email to doctors:', error);
     res.status(500).json({ error: 'Error sending email to doctors' });
   }
