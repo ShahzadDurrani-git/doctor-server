@@ -92,22 +92,48 @@ app.post('/groups/:groupId/doctors', async (req, res) => {
 
 
 // Get all groups
+
 app.get('/groups', async (req, res) => {
   try {
     const groupsSnapshot = await groups.get();
     const allGroups = [];
-    groupsSnapshot.forEach((doc) => {
+
+    for (const groupDoc of groupsSnapshot.docs) {
+      const groupData = groupDoc.data();
+
+      // Assuming "History" is the subcollection name for history
+      const historyCollection = groupDoc.ref.collection('History');
+      const latestHistoryQuery = historyCollection.orderBy('timestamp', 'desc').limit(1);
+      const latestHistorySnapshot = await latestHistoryQuery.get();
+      
+      let mail_status = null;
+      let mail_time = null;
+
+      if (!latestHistorySnapshot.empty) {
+        let latestHistory = latestHistorySnapshot.docs[0].data();
+        mail_status = latestHistory['status'];
+        const timestamp = new Date(
+          latestHistory.timestamp._seconds * 1000 + latestHistory.timestamp._nanoseconds / 1000000
+        );
+        mail_time = timestamp.toUTCString();
+      }
+      
+      
       allGroups.push({
-        id: doc.id,
-        data: doc.data()
+        id: groupDoc.id,
+        data: groupData,
+        status: mail_status,
+        timestamp: mail_time 
       });
-    });
+    }
+
     res.status(200).json(allGroups);
   } catch (error) {
     console.error('Error getting groups:', error);
     res.status(500).json({ error: 'Error getting groups' });
   }
 });
+
 
 // Get a group by ID
 app.get('/groups/:groupId', async (req, res) => {
@@ -251,13 +277,17 @@ app.delete('/groups/:groupId', async (req, res) => {
 
 // Send an email to all doctors in a group and store email metadata
 app.post('/groups/:groupId/send-email', async (req, res) => {
-  try {
-    const groupId = req.params.groupId;
+  const groupId = req.params.groupId;
 
     // Fetch the group
     const groupRef = groups.doc(groupId);
     const groupSnapshot = await groupRef.get();
 
+
+    const historyCollection = groupRef.collection('History');
+
+   
+  try {
     
     if (!groupSnapshot.exists) {
       return res.status(404).json({ error: 'Group not found' });
@@ -269,6 +299,12 @@ app.post('/groups/:groupId/send-email', async (req, res) => {
     
 
     if (doctorsSnapshot.empty) {
+      const historyDocRef = await historyCollection.add({
+        groupId: groupId,
+        status: 'failed',
+        timestamp: FieldValue.serverTimestamp()
+      });
+      
       return res.status(400).json({ error: 'No doctors found in the group' });
     }
 
@@ -292,25 +328,28 @@ app.post('/groups/:groupId/send-email', async (req, res) => {
         console.log("Email sent successfully");
       }
     });
-
-    // Store email metadata
-    await emailHistory.add({
+    const historyDocRef = await historyCollection.add({
       groupId: groupId,
       status: 'success',
       timestamp: FieldValue.serverTimestamp()
     });
+    // Store email metadata
+    
 
     res.status(200).json({ message: 'Email sent successfully to all doctors in the group' });
   } catch (error) {
-    // await emailHistory.add({
-    //   groupId: groupId,
-    //   status: 'failed',
-    //   timestamp: FieldValue.serverTimestamp()
-    // });
+    const historyDocRef = await historyCollection.add({
+      groupId: groupId,
+      status: 'success',
+      timestamp: FieldValue.serverTimestamp()
+    });
+    
     console.error('Error sending email to doctors:', error);
     res.status(500).json({ error: 'Error sending email to doctors' });
   }
 });
+
+
 
 
 app.listen(port, () => {
